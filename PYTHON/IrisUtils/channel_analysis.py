@@ -24,7 +24,15 @@ from scipy import signal
 import multiprocessing as mp
 import matplotlib.pyplot as plt
 from generate_sequence import *
+from numba import jit
+from numpy.linalg import inv as inv_np
 
+
+@jit(nopython=True)
+def hermitian_numba(in_matrix):
+     
+    x = np.conjugate(np.transpose(in_matrix))
+    return x
 
 def calCond(userCSI):
     """Calculate the standard matrix condition number.
@@ -360,6 +368,98 @@ def calCorr(userCSI, corr_vec):
     return corr_total, sig_sc
 
 
+@jit(nopython=True)
+def estimate_initial_numba(H, y, constellation, lld_k_Initial):
+
+    # z = inv_np(np.dot(H, hermitian_numba(H)))
+    # z = np.dot(np.dot(hermitian_numba(H), z), y)
+    # z_real = np.real(z)
+    # z_imag = np.imag(z)
+    m = H.shape[0]
+    n = H.shape[1]
+    # X_Initial = np.random.randn(n) + 1j * np.random.randn(n)
+    var_Initial = np.zeros(n)
+
+    # real_max = np.max(np.real(constellation))
+    # real_min = np.min(np.real(constellation))
+    # imag_max = np.max(np.imag(constellation))
+    # imag_min = np.min(np.imag(constellation))
+
+    # for ii in range(0, n):
+
+    #     if z_real[ii] < real_min:
+    #         X_real = real_min
+    #     elif z_real[ii] > real_max:
+    #         X_real = real_max
+    #     else:
+    #         X_real = z_real[ii]
+        
+    #     if z_imag[ii] < imag_min:
+    #         X_imag = imag_min
+    #     elif z_imag[ii] > imag_max:
+    #         X_imag = imag_max
+    #     else:
+    #         X_imag = z_imag[ii]
+
+    #     X_Initial[ii] = X_real + 1j * X_imag
+
+    X_Initial = np.dot(np.linalg.pinv(H), y)
+
+    for k in range(0, n):
+        var_Initial[k] = np.sum(np.square(np.abs(constellation-X_Initial[k])) * np.exp(lld_k_Initial)) / np.sum(np.exp(lld_k_Initial))
+
+    return X_Initial, var_Initial
+    
+
+@jit(nopython=True)
+def iterative_SIC_numba(X_Initial, var_Initial, var_noise, y, H, constellation, num_iter):
+
+    X = X_Initial
+    e_squared = var_Initial
+    H_squared = np.square(np.abs(H))
+    C = constellation.shape[0]
+    bound = 1e-300
+    eps = 1e-100
+
+    m = H.shape[0]
+    n = H.shape[1]
+    z = np.random.randn(m) + 1j * np.random.randn(m)
+    # delta = np.random.randn(m) + 1j * np.random.randn(m)
+    delta = np.random.randn(m)
+    x_predicted = np.zeros((num_iter, n))
+    prob = np.zeros((C, n))
+
+    for ll in range(0, num_iter):
+        # Compute the log-likelihood of each element in X
+        # Soft decision
+        for k in range(0, n):
+            for ii in range(0, m):
+                field = np.concatenate((np.arange(0, k), np.arange(k+1, n)))
+                z[ii] = y[ii] - np.sum( H[ii][field] * X[field] )
+                delta[ii] = var_noise + np.sum( np.multiply(H_squared[ii][field], e_squared[field]) )
+
+            lld_k = np.zeros((C, m))
+            for alpha in range(0, C):
+                # each possible value in the constellation
+                for ii in range(0, m):
+                    current_lld = np.log( 1/(np.pi * delta[ii]) * np.exp( -np.square(np.abs(z[ii]-H[ii][k]*constellation[alpha])) / delta[ii] ))
+                    lld_k[alpha, ii] = np.real(current_lld)
+            
+            lld_k = np.sum(lld_k, 1)
+            prob[:, k] = np.exp(lld_k)
+
+            if np.sum(np.exp(lld_k)) > bound:
+                X[k] = np.sum(constellation * np.exp(lld_k)) / np.sum(np.exp(lld_k))
+                e_squared[k] = np.sum(np.square(np.abs(constellation - X[k])) * np.exp(lld_k)) / np.sum(np.exp(lld_k))
+            else:
+                X[k] = X_Initial[k]
+                e_squared[k] = np.sum(np.square(np.abs(constellation - X[k])) * np.exp(lld_k)) / (np.sum(np.exp(lld_k)) + eps)
+        # hard decision
+        x_predicted[ll] = np.argmax(prob, axis=0)
+    
+    return x_predicted, X
+    
+
 def demult(csi, data, noise=None, method='zf'):
     # TODO include cell dimension for both csi and data and symbol num for data
     """csi: Frame, User, Antenna, Subcarrier"""
@@ -368,9 +468,12 @@ def demult(csi, data, noise=None, method='zf'):
     demult_start = time.time()
     demul_data = np.empty(
         (csi.shape[0], data.shape[1], csi.shape[1], csi.shape[3]), dtype='complex64')
+        # Frame, Uplink Syms, User, Subcarrier
     bmf_w = np.empty(
         (csi.shape[0], csi.shape[3], csi.shape[2], csi.shape[1]), dtype='complex64')
+        # Frame, Subcarrier, Antenna, User
     data_tp = np.transpose(data, (0, 3, 1, 2))
+    # data: Frame, Subcarrier, Uplink Syms, Antenna
     # TODO: use multi processing to accelerate code
     for sc in range(csi.shape[3]):
         for frame in range(csi.shape[0]):
@@ -383,7 +486,7 @@ def demult(csi, data, noise=None, method='zf'):
                 bmf_w[frame, sc, :, :] = np.transpose(np.conj(w_mmse))
             else:
                 csi_conj = np.conj(csi[frame, :, :, sc])
-                w_scale = 1 / np.sum(np.multiply(csi_conj, csi[frame, :, :, sc]), 1);
+                w_scale = 1 / np.sum(np.multiply(csi_conj, csi[frame, :, :, sc]), 1)
                 bmf_w[frame, sc, :, :] = np.transpose(np.matmul(np.diag(w_scale), csi_conj), (1, 0))
     demul_data = np.transpose(np.matmul(data_tp, bmf_w), (0, 2, 3, 1))
     print("demult time: %f"%(time.time() - demult_start))
@@ -402,7 +505,7 @@ def calcBW(csi, noise=None, method='zf'):
             bmf_w[sc, :, :] = np.conj(w_mmse)
         else:
             csi_conj = np.conj(csi[:, :, sc])
-            w_scale = np.sum(np.multiply(csi_conj, csi[:, :, sc]), 1);
+            w_scale = np.sum(np.multiply(csi_conj, csi[:, :, sc]), 1)
             bmf_w[sc, :, :] = np.transpose(np.diag(w_scale) * csi_conj, (1, 0))
     return bmf_w
 

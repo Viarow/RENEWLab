@@ -24,29 +24,6 @@ import extract_pilots_data as epd
 from find_lts import *
 from ofdmtxrx import ofdmTxRx
 from tqdm import tqdm
-from cmath import phase
-from distutils.command.config import config
-import pickletools
-import torch
-import pickle as pkl
-import yaml
-import os
-from numpy import linalg as LA
-import scipy.io as sio
-import random
-
-import sys
-from pathlib import Path
-sys.path.append(os.path.dirname(os.getcwd()))
-
-from langevine.model.classic_detectors import *
-from langevine.data.sample_generator import *
-from langevine.utils.util import *
-from langevine.runners.runner_langevin_real_data import *
-from langevine.runners.runner_classic_methods_real_data import *
-from langevine.model.ML import *
-from multiprocessing.dummy import Pool as ThreadPool 
-
 
 #@staticmethod
 def csi_from_pilots(pilots_dump, z_padding=150, fft_size=64, cp=16, frm_st_idx=0, frame_to_plot=0, ref_ant=0, ref_user = 0):
@@ -809,55 +786,6 @@ class hdf5_lib:
         # WZC: added peak_map for peak_number analysis
 
     @staticmethod
-    def estimate_snr(pilot_samples, noise_samples, pilot_type, pilot_seq, ofdm_len, z_padding):
-        n_frame = pilot_samples.shape[0]
-        n_ue = pilot_samples.shape[1]
-        n_ant = pilot_samples.shape[2]
-        samps_per_slot = pilot_samples.shape[3] // 2
-        symbol_per_slot = (samps_per_slot - z_padding) // ofdm_len
-
-        td_pwr_dbm_noise = np.empty_like(pilot_samples[:, :, :, 0], dtype=float)
-        td_pwr_dbm_signal = np.empty_like(pilot_samples[:, :, :, 0], dtype=float)
-        snr = np.empty_like(pilot_samples[:, :, :, 0], dtype=float)
-
-        for frameIdx in range(n_frame):    # Frame
-            for ueIdx in range(n_ue):  # UE
-                for bsAntIdx in range(n_ant):  # BS ANT
-
-                    I = pilot_samples[frameIdx, ueIdx, bsAntIdx, 0:samps_per_slot * 2:2] / 2 ** 15
-                    Q = pilot_samples[frameIdx, ueIdx, bsAntIdx, 1:samps_per_slot * 2:2] / 2 ** 15
-                    IQ = I + (Q * 1j)
-                    tx_pilot, lts_pks, lts_corr, pilot_thresh, best_pk = pilot_finder(IQ, pilot_type, flip=True,
-                                                                                      pilot_seq=pilot_seq)
-                    # Find percentage of LTS peaks within a symbol
-                    # (e.g., in a 4096-sample pilot slot, we expect 64, 64-long sequences... assuming no CP)
-                    # seq_found[frameIdx, cellIdx, ueIdx, bsAntIdx] = 100 * (lts_pks.size / symbol_per_slot)
-                    # seq_found[frameIdx, ueIdx, bsAntIdx] = 100 * (peak_map[frameIdx, ueIdx, bsAntIdx] / symbol_per_slot)  # use matched filter analysis output
-
-                    # Compute Power of Time Domain Signal
-                    rms = np.sqrt(np.mean(IQ * np.conj(IQ)))
-                    td_pwr_lin = np.real(rms) ** 2
-                    td_pwr_dbm_s = 10 * np.log10(td_pwr_lin / 1e-3)
-                    td_pwr_dbm_signal[frameIdx, ueIdx, bsAntIdx] = td_pwr_dbm_s
-
-                    # Compute SNR
-                    # noise_samples
-                    In = noise_samples[frameIdx, 0, bsAntIdx, 0:samps_per_slot * 2:2] / 2 ** 15
-                    Qn = noise_samples[frameIdx, 0, bsAntIdx, 1:samps_per_slot * 2:2] / 2 ** 15
-                    IQn = In + (Qn * 1j)
-                    # sio.savemat('test_pwr.mat', {'pilot_t': IQn})
-
-                    # Compute Noise Power (Time Domain)
-                    rms = np.sqrt(np.mean(IQn * np.conj(IQn)))
-                    td_pwr_lin = np.real(rms) ** 2
-                    td_pwr_dbm_n = 10 * np.log10(td_pwr_lin / 1e-3)
-                    td_pwr_dbm_noise[frameIdx, ueIdx, bsAntIdx] = td_pwr_dbm_n
-                    # SNR
-                    snr[frameIdx, ueIdx, bsAntIdx] = td_pwr_dbm_s - td_pwr_dbm_n
-        
-        return snr
-
-    @staticmethod
     def measure_snr(pilot_samples, noise_samples, peak_map, pilot_type, pilot_seq, ofdm_len, z_padding):
         n_frame = pilot_samples.shape[0]
         n_ue = pilot_samples.shape[1]
@@ -989,8 +917,8 @@ class hdf5_lib:
         zero_sc_ind = np.setdiff1d(zero_sc_ind, pilot_sc_ind)
         nonzero_sc_ind = np.setdiff1d(range(fft_size), zero_sc_ind)
         ul_data_frame_num = int(metadata['UL_DATA_FRAME_NUM'])
-        tx_file_names = metadata['TX_FD_DATA_FILENAMES'].astype(str)
-        # tx_file_names = ['ul_data_f_16QAM_52_64_10_1_1_A_0.bin', 'ul_data_f_16QAM_52_64_10_1_1_A_1.bin', 'ul_data_f_16QAM_52_64_10_1_1_A_2.bin', 'ul_data_f_16QAM_52_64_10_1_1_A_3.bin']
+        # tx_file_names = metadata['TX_FD_DATA_FILENAMES'].astype(str)
+        tx_file_names = ['ul_data_f_16QAM_52_64_10_1_1_A_0.bin', 'ul_data_f_16QAM_52_64_10_1_1_A_1.bin', 'ul_data_f_16QAM_52_64_10_1_1_A_2.bin', 'ul_data_f_16QAM_52_64_10_1_1_A_3.bin']
         txdata = np.empty((ul_data_frame_num, num_cl, ul_slot_num,
                      symbol_per_slot,  fft_size), dtype='complex64')
         read_size = 2 * ul_data_frame_num * ul_slot_num * cl_ch_num * symbol_per_slot * fft_size
@@ -1057,16 +985,6 @@ class hdf5_lib:
         else:
             ul_syms_f = np.fft.fft(ul_syms, fft_size, 3)
 
-        SNR = np.zeros((n_frames, ))
-        for i in range(n_frames):
-            null_sc = ul_syms_f[i, :, :, zero_sc_ind]
-            avg_noise_power = np.mean(np.sum(np.sum(np.square(np.abs(null_sc)), axis=1), axis=0))
-            sample_sc = ul_syms_f[i, :, :, nonzero_sc_ind]
-            signal_power = np.sum(np.square(np.abs(sample_sc)))
-            SNR[i] = (signal_power - avg_noise_power * len(nonzero_sc_ind)) / (avg_noise_power * len(nonzero_sc_ind))
-        print("SNR:", end=" ")
-        print(SNR)
-
         ul_equal_syms = np.zeros((n_frames, n_users, symbol_per_slot * data_sc_len), dtype='complex64')
 
         # process tx data
@@ -1096,98 +1014,48 @@ class hdf5_lib:
             M = 64
 
         if method == 'ml':
-            dirPath = os.getcwd()
-            with open(dirPath + '/langevine/config_real_data.yml', 'r') as f:
-                aux = yaml.load(f,  Loader=yaml.FullLoader)
-            config = dict2namespace(aux)  
-            SEED = 123
-            torch.manual_seed(SEED)
-            useGPU = False
-            if useGPU and torch.cuda.is_available():
-                torch.cuda.empty_cache()
-                device = 'cuda:0'
-            else:
-                device = 'cpu'
+            mod_syms = []
+            if modulation == 'QPSK':
+                for i in range(M):
+                    mod_syms.append(ofdm_obj.qpsk_mod(i))
+            elif modulation == '16QAM':
+                for i in range(M):
+                    mod_syms.append(ofdm_obj.qam16_mod(i))
+            elif modulation == '64QAM':
+                for i in range(M):
+                    mod_syms.append(ofdm_obj.qam64_mod(i))
 
-            # transmitted symbols
-            frame_start = 0 if txdata.shape[0] == 1 else min_ue_offset
-            frame_end = frame_start + useful_frame_num
-            
-            # uncompensated channel matrices, shape (n_frames, users, antennas, data_sc_len)
             csi_f = np.zeros((n_frames, n_users, n_ants, fft_size), dtype='complex64')
             csi_f[:, :, :, nonzero_sc_ind] = csi
 
-            # container
-            ul_equal_syms = np.zeros((useful_frame_num, n_users, symbol_per_slot, data_sc_len)) + 1j * np.zeros((useful_frame_num, n_users, symbol_per_slot, data_sc_len))
+            # Calc. phase rotation with ZF
+            pilot_sc_demult = demult(csi_f[:, :, :, pilot_sc_ind], np.transpose(ul_syms_f[:, :, :, pilot_sc_ind], (0, 2, 1, 3)), None, 'zf')
+            phase_corr = pilot_sc_demult * np.conj(pilot_sc_val)
+            # Frame, Symbol, User
+            phase_err = np.angle(np.mean(phase_corr, 3))
+            # Frame, User, Symbol
+            phase_comp = np.transpose(np.exp(1j*phase_err), (0, 2, 1))
 
-            # main loop of langevine
-            error_mmse_paper = np.zeros((data_sc_len, symbol_per_slot))
-            error_lang_paper = np.zeros((data_sc_len, symbol_per_slot))
+            # Apply phase correction to CSI
+            csi_f_pc = np.zeros((n_frames, n_ants, n_users, symbol_per_slot * data_sc_len), dtype='complex64')
+            for i in range(symbol_per_slot):
+                csi_f_flat = np.reshape(csi_f[:, :, :, data_sc_ind], (n_frames, n_users, n_ants * data_sc_len))
+                csi_f_flat_pc = csi_f_flat# * phase_comp[:, :, i:i+1]
+                csi_f_pc[:, :, :, i*data_sc_len:(i+1)*data_sc_len] = np.transpose(np.reshape(csi_f_flat_pc, (n_frames, n_users, n_ants, data_sc_len)), (0, 2, 1, 3))
 
-            for subcarrierIndex in range(data_sc_len):
-                for ofdmSymb in range(symbol_per_slot):
-
-                    #\\\ Load data
-                    subcarrier = data_sc_ind[subcarrierIndex]
-                    batch_size, H_MMSE, H_comp, HPilotri, yPilotri, xri, xPilotri, pilotValue, pilotIndex, sigma, yri = processData(ofdmSymb, subcarrier, frame_start, frame_end,  pilot_sc_ind, pilot_sc_val, csi_f, ul_syms_f, tx_symbols, config)
-
-                    #\\\ Create generator and indices of the true symbols
-                    generator = sample_generator(batch_size, config.mod_n, config.NR)
-                    idx_real = generator.demodulate(xri)
-                    j_indices = generator.joint_indices(idx_real)
-
-                    #\\\ Phase correction
-                    samplesP = torch.zeros((batch_size, config.NT * 2, 4))
-                    index = 0
-                    #\\\ Pilot evaluation
-                    for pilotInd in range(len(pilotIndex)):
-                        serLangevin, serSDR, samplesP[:,:,index] = runClassicDetectors(config, generator, batch_size, device, H = HPilotri[:,:,:,index], y = yPilotri[index,:,:], noise_sigma = sigma, j_indices = j_indices)
-                        index =  index + 1
-                    
-                    samplesP_complexMMSE = samplesP[:, 0:config.NT, :].cpu().detach().numpy() + 1j * samplesP[:, config.NT:, :].cpu().detach().numpy()
-                    phase_corr = samplesP_complexMMSE * np.conj(pilotValue)
-                    phase_err = np.angle(np.mean(phase_corr, 2))
-                    phase_comp = np.exp(-1j*phase_err)
-
-                    #\\\ Multiply the channel by the phase correction before running the detection
-                    H = H_comp  * phase_comp[:,None,]
-                    H = torch.tensor(H)
-                    Hr = torch.real(H)
-                    Hi = torch.imag(H)
-                    h1 = torch.cat((Hr, 1. * Hi), dim=2)
-                    h2 = torch.cat((-1. * Hi, Hr), dim=2)
-                    H = torch.cat((h1, h2), dim=1)
-
-                    #\\\ Run ML detector
-                    pool = ThreadPool(40)
-                    x_ml = pool.map(ml_proc_star, zip(H.numpy(), yri.unsqueeze(dim=-1).numpy()))
-                    x_ml = np.array(x_ml).squeeze(axis=1)
-                    
-                    # print(sym_detection_absolute(x_MMSE_hat.to(device='cpu'), j_indices, generator.real_QAM_const, generator.imag_QAM_const))  
-                    print(1 - sym_detection(torch.from_numpy(x_ml), j_indices, generator.real_QAM_const, generator.imag_QAM_const))
-                    ul_pred_syms = x_ml
-                    ul_equal_syms[:, :, ofdmSymb, subcarrierIndex] = ul_pred_syms[:, 0:n_users] + 1j * ul_pred_syms[:, n_users:2*n_users]
-
-
-            # ul_equal_syms = np.transpose(ul_equal_syms, (0, 2, 1, 3))
-            # ul_equal_syms shape (n_frames, users, syms/splot * data_sc_len)
-            ul_equal_syms = np.reshape(ul_equal_syms, (ul_equal_syms.shape[0], ul_equal_syms.shape[1], symbol_per_slot * data_sc_len))
-            # predicted indices
-            ul_demod_syms = np.empty(ul_equal_syms.shape, dtype="int")
+            ul_demod_syms = np.empty(ul_equal_syms.shape, dtype="complex64")
+            ul_syms_f_flat = np.reshape(ul_syms_f[:, :, :, data_sc_ind], (n_frames, n_ants, symbol_per_slot * data_sc_len))
+            ul_demod_syms = mlDetector(csi_f_pc, ul_syms_f_flat, mod_syms)
 
             for j in range(n_users):
                 frame_start = 0 if txdata.shape[0] == 1 else min_ue_offset
                 frame_end = frame_start + useful_frame_num
-                slot_evm[:, j] = np.linalg.norm(ul_equal_syms[frame_start:frame_end, j, :] - tx_data_syms[:useful_frame_num, j, :], 2, axis=1) / ul_equal_syms.shape[2]
-                for i in range(n_frames):
-                    ul_demod_syms[i, j, :] = ofdm_obj.demodulation(ul_equal_syms[i, j, :], M)
                 for i in range(frame_start, frame_end):
                     new_i = i - frame_start
+                    ul_demod_int = ofdm_obj.demodulation(ul_demod_syms[i, j, :], M)
                     ul_tx_syms = ofdm_obj.demodulation(tx_data_syms[new_i, j, :], M)
-                    res = [k for k, l in zip(list(ul_demod_syms[i, j, :]), list(ul_tx_syms)) if k == l]
+                    res = [k for k, l in zip(list(ul_demod_int), list(ul_tx_syms)) if k == l]
                     slot_ser[new_i, j] = (ul_demod_syms.shape[2] - len(list(res))) / ul_demod_syms.shape[2]
-            slot_evm_snr = 10 * np.log10(1 / slot_evm)
-
 
         elif method == 'langevine':
             dirPath = os.getcwd()
@@ -1202,86 +1070,154 @@ class hdf5_lib:
                 device = 'cuda:0'
             else:
                 device = 'cpu'
-
-            # transmitted symbols
-            frame_start = 0 if txdata.shape[0] == 1 else min_ue_offset
-            frame_end = frame_start + useful_frame_num
             
             # uncompensated channel matrices, shape (n_frames, users, antennas, data_sc_len)
             csi_f = np.zeros((n_frames, n_users, n_ants, fft_size), dtype='complex64')
             csi_f[:, :, :, nonzero_sc_ind] = csi
+            csi_data = csi_f[:, :, :, data_sc_ind]
+            # received up;ink symbols, shape (n_frames, syms/slot, antennas, data_sc_len)
+            ul_syms_data = np.transpose(ul_syms_f[:, :, :, data_sc_ind], (0, 2, 1, 3))
 
-            # container
-            ul_equal_syms = np.zeros((useful_frame_num, n_users, symbol_per_slot, data_sc_len)) + 1j * np.zeros((useful_frame_num, n_users, symbol_per_slot, data_sc_len))
+            # phase offset caculated using pilots
+            ul_syms_pilot = np.transpose(ul_syms_f[:, :, :, pilot_sc_ind], (0, 2, 1, 3))
+            pilot_sc_demult = demult(csi_f[:, :, :, pilot_sc_ind], ul_syms_pilot, None, 'zf')
+            # pilot_sc_demult shape (n_frames, syms/slot, users, pilot_sc_len)
+            phase_corr = pilot_sc_demult * np.conj(pilot_sc_val)
+            phase_err = np.angle(np.mean(phase_corr, 3))
+            phase_comp = np.exp(-1j*phase_err)
+            # phase comp shape (n_frames, syms/slot, users)
+
+            # indices of the transmitted symbols
+            frame_start = 0 if txdata.shape[0] == 1 else min_ue_offset
+            frame_end = frame_start + useful_frame_num
+            tx_syms_data = np.transpose(tx_symbols[frame_start:frame_end, :, :, data_sc_ind], (0, 2, 1, 3))
+            tx_syms_indices = np.zeros(tx_syms_data.shape, dtype=int)
+            ul_equal_syms = np.zeros(tx_syms_data.shape) + 1j * np.zeros(tx_syms_data.shape)
+
+            # noise variance, TODO: may need to change
+            sigma = torch.tensor(1e-01)
 
             # main loop of langevine
-            error_mmse_paper = np.zeros((data_sc_len, symbol_per_slot))
-            error_lang_paper = np.zeros((data_sc_len, symbol_per_slot))
-
-            for subcarrierIndex in range(data_sc_len):
-                for ofdmSymb in range(symbol_per_slot):
-
-                    #\\\ Load data
-                    subcarrier = data_sc_ind[subcarrierIndex]
-                    batch_size, H_MMSE, H_comp, HPilotri, yPilotri, xri, xPilotri, pilotValue, pilotIndex, sigma, yri = processData(ofdmSymb, subcarrier, frame_start, frame_end,  pilot_sc_ind, pilot_sc_val, csi_f, ul_syms_f, tx_symbols, config)
-
-                    #\\\ Create generator and indices of the true symbols
-                    generator = sample_generator(batch_size, config.mod_n, config.NR)
-                    idx_real = generator.demodulate(xri)
-                    j_indices = generator.joint_indices(idx_real)
-
-                    #\\\ Phase correction
-                    samplesP = torch.zeros((batch_size, config.NT * 2, 4))
-                    index = 0
-                    #\\\ Pilot evaluation
-                    for pilotInd in range(len(pilotIndex)):
-                        serLangevin, serSDR, samplesP[:,:,index] = runClassicDetectors(config, generator, batch_size, device, H = HPilotri[:,:,:,index], y = yPilotri[index,:,:], noise_sigma = sigma, j_indices = j_indices)
-                        index =  index + 1
-                    
-                    samplesP_complexMMSE = samplesP[:, 0:config.NT, :].cpu().detach().numpy() + 1j * samplesP[:, config.NT:, :].cpu().detach().numpy()
-                    phase_corr = samplesP_complexMMSE * np.conj(pilotValue)
-                    phase_err = np.angle(np.mean(phase_corr, 2))
-                    phase_comp = np.exp(-1j*phase_err)
-
-                    #\\\ Multiply the channel by the phase correction before running the detection
-                    H = H_comp  * phase_comp[:,None,]
-                    H = torch.tensor(H)
+            batch_size = ul_syms_data.shape[1]  # syms/slot
+            generator = sample_generator(batch_size, config.mod_n, config.NR)
+            for i in range(0, n_frames):
+                for j in range(0, data_sc_len):
+                    # shape (users, antennas)
+                    HH = np.conjugate(np.transpose(csi_data[i, :, :, j]))
+                    H_repeat = np.tile(HH, (batch_size, 1, 1))
+                    # compensated H, shape (symss/slot, antennas, users)
+                    H_slot = np.multiply(H_repeat, phase_comp[i, :, None, :])
+                    H = torch.tensor(H_slot)
+                    # convert complex H to real H
                     Hr = torch.real(H)
                     Hi = torch.imag(H)
                     h1 = torch.cat((Hr, 1. * Hi), dim=2)
                     h2 = torch.cat((-1. * Hi, Hr), dim=2)
                     H = torch.cat((h1, h2), dim=1)
 
-                    #\\\ Run langevin detector
-                    serLangevin, samples_hat, samples = runLangevin(config, generator, batch_size, device, H = H, y = yri, noise_sigma = sigma, j_indices = j_indices)
+                    y = torch.tensor(ul_syms_data[i, :, :, j])
+                    yr = torch.real(y)
+                    yi = torch.imag(y)
+                    yri = torch.cat((yr, yi), dim=1)
                     
-                    # print(sym_detection_absolute(x_MMSE_hat.to(device='cpu'), j_indices, generator.real_QAM_const, generator.imag_QAM_const))  
+                    for k in range(0, batch_size):
+                        tx_syms_indices[i, k, :, j] = ofdm_obj.demodulation(tx_syms_data[i, k, :, j], M)
+                    j_indices = torch.tensor(tx_syms_indices[i, :, :, j])
+
+                    # run langevine detector, ul_equal_syms shape (n_frames, syms/slot, users, data_sc_len)
+                    serLangevin, samples_hat, samples = runLangevin(config, generator, batch_size, device, H = H, y = yri, noise_sigma = sigma, j_indices = j_indices)
                     print(sym_detection_absolute(samples_hat.to(device='cpu'), j_indices, generator.real_QAM_const, generator.imag_QAM_const))
-                    ul_pred_syms = samples_hat.cpu().numpy()
-                    ul_equal_syms[:, :, ofdmSymb, subcarrierIndex] = ul_pred_syms[:, 0:n_users] + 1j * ul_pred_syms[:, n_users:2*n_users]
+                    ul_pred_syms = samples_hat.cpu().detach().numpy()
+                    ul_equal_syms[i, :, :, j] = ul_pred_syms[:, 0:n_users] + 1j * ul_pred_syms[:, n_users:2*n_users]
 
-
-            # ul_equal_syms = np.transpose(ul_equal_syms, (0, 2, 1, 3))
+            ul_equal_syms = np.transpose(ul_equal_syms, (0, 2, 1, 3))
             # ul_equal_syms shape (n_frames, users, syms/splot * data_sc_len)
-            ul_equal_syms = np.reshape(ul_equal_syms, (ul_equal_syms.shape[0], ul_equal_syms.shape[1], symbol_per_slot * data_sc_len))
+            ul_equal_syms = np.reshape(ul_equal_syms, (ul_equal_syms.shape[0], ul_equal_syms.shape[1], symbol_per_slot * len(data_sc_ind)))
             # predicted indices
             ul_demod_syms = np.empty(ul_equal_syms.shape, dtype="int")
+            tx_syms_indices = np.transpose(tx_syms_indices, (0, 2, 1, 3))
+            tx_syms_indices = np.reshape(tx_syms_indices, (tx_syms_indices.shape[0], tx_syms_indices.shape[1], symbol_per_slot * len(data_sc_ind)))
+
+            for j in range(n_users):
+                for i in range(n_frames):
+                    ul_demod_syms[i, j, :] = ofdm_obj.demodulation(ul_equal_syms[i, j, :], M)
+                    res = [k for k, l in zip(list(ul_demod_syms[i, j, :]), list(tx_syms_indices[i, j, :])) if k == l]
+                    slot_ser[new_i, j] = (ul_demod_syms.shape[2] - len(list(res))) / ul_demod_syms.shape[2]
+            slot_evm_snr = 10 * np.log10(1 / slot_evm)
+
+        elif method == 'zf-sic':
+            mod_syms = []
+            if modulation == 'QPSK':
+                for i in range(M):
+                    mod_syms.append(ofdm_obj.qpsk_mod(i))
+            elif modulation == '16QAM':
+                for i in range(M):
+                    mod_syms.append(ofdm_obj.qam16_mod(i))
+            elif modulation == '64QAM':
+                for i in range(M):
+                    mod_syms.append(ofdm_obj.qam64_mod(i))
+            mod_syms = np.array(mod_syms, dtype='complex128')
+            print(mod_syms)
+
+            csi_f = np.zeros((n_frames, n_users, n_ants, fft_size), dtype='complex128')
+            csi_f[:, :, :, nonzero_sc_ind] = csi
+
+            # Calc. phase rotation with ZF
+            pilot_sc_demult = demult(csi_f[:, :, :, pilot_sc_ind], np.transpose(ul_syms_f[:, :, :, pilot_sc_ind], (0, 2, 1, 3)), None, 'zf')
+            phase_corr = pilot_sc_demult * np.conj(pilot_sc_val)
+            # Frame, Symbol, User
+            phase_err = np.angle(np.mean(phase_corr, 3))
+            # Frame, User, Symbol
+            phase_comp = np.transpose(np.exp(1j*phase_err), (0, 2, 1))
+
+            # Apply phase correction to CSI
+            csi_f_pc = np.zeros((n_frames, n_ants, n_users, symbol_per_slot * data_sc_len), dtype='complex128')
+            for i in range(symbol_per_slot):
+                csi_f_flat = np.reshape(csi_f[:, :, :, data_sc_ind], (n_frames, n_users, n_ants * data_sc_len))
+                csi_f_flat_pc = csi_f_flat * phase_comp[:, :, i:i+1]
+                csi_f_pc[:, :, :, i*data_sc_len:(i+1)*data_sc_len] = np.transpose(np.reshape(csi_f_flat_pc, (n_frames, n_users, n_ants, data_sc_len)), (0, 2, 1, 3))
+
+            # ul_demod_syms = np.empty(ul_equal_syms.shape, dtype="complex64")
+            ul_syms_f_flat = np.reshape(ul_syms_f[:, :, :, data_sc_ind], (n_frames, n_ants, symbol_per_slot * data_sc_len))
+
+            noise_del_ind = []
+            count1, count2 = 0, 0
+            while count1 < len(nonzero_sc_ind) and count2 < len(pilot_sc_ind):
+                if nonzero_sc_ind[count1] == pilot_sc_ind[count2]:
+                    noise_del_ind.append(count1)
+                    count2 += 1
+                count1 += 1
+            ul_noise_f = np.transpose(noise_samps_f, (0, 2, 1, 3))
+            ul_noise_f = np.delete(ul_noise_f, noise_del_ind, axis=3)
+            # ul_noise_f_flat = np.reshape(ul_noise_f, (n_frames, n_ants, symbol_per_slot * data_sc_len))
+            
+            lld_k_Initial = np.log(1/M * np.ones(M))
+            num_iter = 2
+            ul_demod_int = np.zeros((n_frames, n_users, symbol_per_slot * data_sc_len), dtype=int)
+            for l in tqdm(range(n_frames)):
+                for k in range(symbol_per_slot * data_sc_len):
+                    H = csi_f_pc[l, :, :, k]
+                    sigma = np.mean(np.abs(ul_noise_f[l, :, :, k//symbol_per_slot])) 
+                    # sigma = np.mean(np.power(np.abs(ul_noise_f[l, :, :, k//symbol_per_slot]), 2)) 
+                    X_Initial, var_Initial = estimate_initial_numba(H, ul_syms_f_flat[l, :, k], mod_syms, lld_k_Initial)
+                    # ul_equal_syms[l, :, k] = X_Initial
+                    xhat_mat, X_soft = iterative_SIC_numba(X_Initial, var_Initial, sigma, ul_syms_f_flat[l, :, k], H, mod_syms, num_iter)
+                    ul_equal_syms[l, :, k] = X_soft
+                    ul_demod_int[l, :, k] = xhat_mat[num_iter-1]
+
+            ul_demod_syms = ul_demod_int
 
             for j in range(n_users):
                 frame_start = 0 if txdata.shape[0] == 1 else min_ue_offset
                 frame_end = frame_start + useful_frame_num
-                slot_evm[:, j] = np.linalg.norm(ul_equal_syms[frame_start:frame_end, j, :] - tx_data_syms[:useful_frame_num, j, :], 2, axis=1) / ul_equal_syms.shape[2]
-                for i in range(n_frames):
-                    ul_demod_syms[i, j, :] = ofdm_obj.demodulation(ul_equal_syms[i, j, :], M)
                 for i in range(frame_start, frame_end):
                     new_i = i - frame_start
+                    # ul_demod_int = ofdm_obj.demodulation(ul_demod_syms[i, j, :], M)
                     ul_tx_syms = ofdm_obj.demodulation(tx_data_syms[new_i, j, :], M)
-                    res = [k for k, l in zip(list(ul_demod_syms[i, j, :]), list(ul_tx_syms)) if k == l]
+                    res = [k for k, l in zip(list(ul_demod_int[i, j, :]), list(ul_tx_syms)) if k == l]
                     slot_ser[new_i, j] = (ul_demod_syms.shape[2] - len(list(res))) / ul_demod_syms.shape[2]
-            slot_evm_snr = 10 * np.log10(1 / slot_evm)
 
         else:
-            
             # UL Syms: #Frames, #OFDM Symbols, #Antennas, #Samples
             ul_syms_f = np.transpose(ul_syms_f, (0, 2, 1, 3))
             ul_syms_f = np.delete(ul_syms_f, zero_sc_ind, 3)
@@ -1319,5 +1255,6 @@ class hdf5_lib:
             slot_evm_snr = 10 * np.log10(1 / slot_evm)
 
 
-        return SNR, ul_equal_syms, ul_demod_syms, tx_data_syms, slot_evm, slot_evm_snr, slot_ser
+
+        return ul_equal_syms, ul_demod_syms, tx_data_syms, slot_evm, slot_evm_snr, slot_ser
 

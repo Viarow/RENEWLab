@@ -181,7 +181,7 @@ def verify_hdf5(hdf5, frame_i=100, cell_i=0, ofdm_sym_i=0, ant_i =0,
             print("Plotting the results:\n")
 
             # plot a frame:
-            plot_match_filter(match_filt, ref_frame, n_frm_st, ant_i)
+            plot_match_filter(match_filt, ref_frame, n_frm_st, ant_i, path='./results/match_filter.png')
             #plot channel analysis
             show_plot(cmpx_pilots, seq_orig, match_filt, user_i, ant_i, ref_frame, n_frm_st)
 
@@ -330,17 +330,29 @@ def verify_hdf5(hdf5, frame_i=100, cell_i=0, ofdm_sym_i=0, ant_i =0,
         user_amps = np.mean(np.abs(ul_samps[:, :, ant_i, :]), axis=2)
         plot_iq_samps(ul_samps, user_amps, n_frm_st, ref_frame, [ul_slot_i], [ant_i], data_str="Uplink Data")
 
-        if demod=='zf' or demod=='conj' or demod=='mmse' or demod=='ml':
+        avail_method = ['zf', 'mmse', 'conj', 'ml', 'zf-sic', 'langevine']
+        #if demod=='zf' or demod=='conj' or demod=='mmse' or demod=='ml':
+        if demod in avail_method:
             if noise_avail:
                 noise_samples = hdf5.noise_samples[:, cell_i, :, :, :]
-                noise, _ = hdf5_lib.samps2csi_large(noise_samples, noise_samples.shape[1], chunk_size, samps_per_slot, fft_size=fft_size,
+                noise, noise_snr = hdf5_lib.samps2csi_large(noise_samples, noise_samples.shape[1], chunk_size, samps_per_slot, fft_size=fft_size,
                                             offset=offset, bound=z_padding, cp=cp, pilot_f=ofdm_pilot_f)
                 noise_f = noise[:, ul_slot_i, :, :, :]
+                snr = hdf5_lib.estimate_snr(pilot_samples, noise_samples, pilot_type, ofdm_pilot, ofdm_len, z_padding)
+                #snr, seq_found = hdf5_lib.measure_snr(pilot_samples, noise_samples, peak_map, pilot_type, ofdm_pilot, ofdm_len, z_padding)
             else:
                 noise_f = None
+            prefix = "./results/LOS_64x2_16QAM/zf/TxGains_65_65_"
             tx_data = hdf5_lib.load_tx_data(metadata, hdf5.dirpath)
-            equalized_symbols, demod_symbols, tx_symbols, slot_evm, slot_evm_snr, slot_ser = hdf5_lib.demodulate(ul_samps[:, ul_slot_i, :, :], userCSI, tx_data[:, :, ul_slot_i, :, :], metadata, ue_frame_offset, offset, ul_slot_i, noise_f, demod, fft_shifted_dataset)
-            plot_constellation_stats(slot_evm, slot_evm_snr, slot_ser, equalized_symbols, tx_symbols, ref_frame, ul_slot_i)
+            snr, equalized_symbols, demod_symbols, tx_symbols, slot_evm, slot_evm_snr, slot_ser = hdf5_lib.demodulate(ul_samps[:, ul_slot_i, :, :], userCSI, tx_data[:, :, ul_slot_i, :, :], metadata, ue_frame_offset, offset, ul_slot_i, noise_f, demod, fft_shifted_dataset)
+            save_results(slot_evm, slot_evm_snr, slot_ser, path=prefix+"evm_ser.npy")
+            np.save(prefix+"snr.npy", snr)
+            # paths = ['./results/LOS_64x2_16QAM_1/frame_data_ml.png', './results/LOS_64x2_16QAM_1/EVM_SNR_ml.png']
+            # plot_constellation_stats(slot_evm, slot_evm_snr, slot_ser, equalized_symbols, tx_symbols, ref_frame, ul_slot_i, "Uplink", paths)
+            
+            # scatter_ser_snr(slot_ser, snr, fig_dir='./results/LOS_64x2_16QAM_1')
+            # plot_ser_snr(slot_ser, snr, fig_dir='./results/LOS_64x4_QPSK_1')
+            # plot_ser_evm(slot_evm_snr, slot_ser, method='ml', fig_dir='./results/LOS_64x2_16QAM_1')
 
     # Plot DL data symbols
     if dl_data_avail > 0:

@@ -139,7 +139,7 @@ def plot_calib(calib_mat, bs_nodes, frame_i, ant_i, subcarrier_i, unwrap=True):
         axes[3, 0].set_ylim(-np.pi, np.pi)
     axes[3, 0].legend(loc='lower right', frameon=False)
 
-def plot_constellation_stats(evm, evm_snr, ser, ul_data, txdata, frame_i, ul_slot_i, data_str = "Uplink"):
+def plot_constellation_stats(evm, evm_snr, ser, ul_data, txdata, frame_i, ul_slot_i, data_str = "Uplink", paths=None):
     n_users = ul_data.shape[1]
     plt_x_len = int(np.ceil(np.sqrt(n_users)))
     plt_y_len = int(np.ceil(n_users / plt_x_len))
@@ -161,7 +161,96 @@ def plot_constellation_stats(evm, evm_snr, ser, ul_data, txdata, frame_i, ul_slo
         axes6[0, 0].plot(range(evm.shape[0]), 100 * evm[:, i], label='User %d'%(i))
         axes6[1, 0].plot(range(evm.shape[0]), evm_snr[:, i], label='User %d'%(i))
         axes6[2, 0].plot(range(ser.shape[0]), ser[:, i], label='User %d'%(i))
+        axes6[2, 0].set_yscale('log')
+        axes6[2, 0].set_ylim([1e-4, 1])
     axes6[0, 0].legend(loc='upper right', frameon=False)
+    if paths:
+        fig5.savefig(paths[0], dpi=200)
+        fig6.savefig(paths[1], dpi=200)
+
+
+def plot_ser_snr(slot_ser, snr, fig_dir=None):
+    n_users = slot_ser.shape[1]
+    n_frames = snr.shape[0]
+    snr_min = np.min(snr, axis=2)
+    snr_max = np.max(snr, axis=2)
+    
+    fig6, axes6 = plt.subplots(nrows=3, ncols=1, squeeze=False, figsize=(10, 8))
+    fig6.suptitle('Uplink max SNR/min SNR/SER - UL frames')
+    axes6[0, 0].set_ylabel('max SNR(dB)')
+    axes6[1, 0].set_ylabel('min SNR(dB)')
+    axes6[2, 0].set_ylabel('Symbol Error Rate')
+    axes6[2, 0].set_xlabel('Frame Number')
+
+    for i in range(n_users):
+        axes6[0, 0].plot(range(n_frames), snr_max[:, i], label='User %d'%(i))
+        axes6[1, 0].plot(range(n_frames), snr_min[:, i], label='User %d'%(i))
+        axes6[2, 0].plot(range(n_frames), slot_ser[:, i], label='User %d'%(i))
+        axes6[2, 0].set_yscale('log')
+        axes6[2, 0].set_ylim([1e-4, 1])
+
+    axes6[0, 0].legend(loc='upper right', frameon=False)
+    if fig_dir:
+        fig6.savefig(fig_dir+'/SNR_SER_frame.png', dpi=200)
+
+def scatter_ser_snr(slot_ser, snr, fig_dir=None):
+    n_users = slot_ser.shape[1]
+    n_frames = snr.shape[0]
+    # snr_min = np.min(snr, axis=2)
+    # snr_max = np.max(snr, axis=2)
+    
+    fig1, ax1 = plt.subplots()
+    ax1.set_title('SER vs SNR')
+    ax1.set_xlabel('SNR(dB)')
+    ax1.set_ylabel('Symbol Error Rate')
+    for k in range(n_users):
+        ax1.scatter(snr, slot_ser[:, k], label='User %d'%(k))
+    ax1.set_yscale('log')
+    #ax1.set_ylim([1e-4, 1])
+    ax1.legend(loc='upper right', frameon=True)
+
+    plt.tight_layout()
+
+    # fig2, ax2 = plt.subplots()
+    # ax2.set_title('SER vs max SNR')
+    # ax2.set_xlabel('SNR(dB)')
+    # ax2.set_ylabel('Symbol Error Rate')
+    # for k in range(n_users):
+    #     ax2.scatter(snr_max[:, k], slot_ser[:, k], label='User %d'%(k))
+    # ax2.set_yscale('log')
+    # #ax2.set_ylim([1e-4, 1])
+    # ax2.legend(loc='upper right', frameon=True)
+    # plt.tight_layout()
+
+    if fig_dir:
+        fig1.savefig(fig_dir+'/ser_snr.png', dpi=200)
+        # fig2.savefig(fig_dir+'/ser_snr_max.png', dpi=200)
+
+
+def plot_ser_evm(slot_evm_snr, slot_ser, method, fig_dir=None):
+    n_users = slot_ser.shape[1]
+    fig1, ax1 = plt.subplots()
+    ax1.set_title('SER vs EVM-SNR')
+    ax1.set_xlabel('EVM-SNR(dB)')
+    ax1.set_ylabel('Symbol Error Rate')
+    for k in range(0, n_users):
+        ax1.scatter(slot_evm_snr[:, k], slot_ser[:, k], label='User %d'%(k))
+    ax1.set_yscale('log')
+    ax1.set_ylim([1e-3, 0.1])
+    ax1.legend(loc='upper right', frameon=True)
+
+    plt.tight_layout()
+    if fig_dir:
+        fig1.savefig(fig_dir + '/ser_evm_snr_' + method + '.png', dpi=200)
+
+
+def save_results(slot_evm, slot_evm_snr, slot_ser, path):
+    a = np.expand_dims(slot_evm, axis=0)
+    b = np.expand_dims(slot_evm_snr, axis=0)
+    c = np.expand_dims(slot_ser, axis=0)
+    comb = np.concatenate((a, b, c), axis=0)
+    np.save(path, comb)
+
 
 def show_plot(cmpx_pilots, lts_seq_orig, match_filt, ref_user, ref_ant, ref_frame, frm_st_idx):
     '''
@@ -335,7 +424,7 @@ def plot_snr_map(snr, n_frm_st, n_frm_end, n_ant, sub_sample=1):
     cbar = plt.colorbar(c[-1], ax=axes.ravel().tolist(), ticks=np.linspace(0, np.max(snr), 10),
                         orientation='horizontal')
 
-def plot_match_filter(match_filt, ref_frame, n_frm_st, ant_i):
+def plot_match_filter(match_filt, ref_frame, n_frm_st, ant_i, path=None):
     n_ue = match_filt.shape[1]
 
     # plot a frame:
@@ -346,6 +435,8 @@ def plot_match_filter(match_filt, ref_frame, n_frm_st, ant_i):
         axes[n_u, 0].set_xlabel('Samples')
         axes[n_u, 0].set_title('UE {}'.format(n_u))
         axes[n_u, 0].grid(True)
+    if path:
+        plt.savefig(path)
 
 def plot_spectral_efficiency(subf_conj, subf_zf, mubf_conj, mubf_zf, timestamp, n_ant, n_ue, frame_i, data_str="Current Frame"):
     fig1, axes1 = plt.subplots(nrows=2, ncols=2, squeeze=False, figsize=(10, 8))
