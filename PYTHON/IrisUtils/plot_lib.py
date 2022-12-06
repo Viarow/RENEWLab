@@ -204,7 +204,7 @@ def scatter_ser_snr(slot_ser, snr, fig_dir=None):
     ax1.set_xlabel('SNR(dB)')
     ax1.set_ylabel('Symbol Error Rate')
     for k in range(n_users):
-        ax1.scatter(snr, slot_ser[:, k], label='User %d'%(k))
+        ax1.plot(snr, slot_ser[:, k], marker='o', markersize=7, label='User %d'%(k))
     ax1.set_yscale('log')
     #ax1.set_ylim([1e-4, 1])
     ax1.legend(loc='upper right', frameon=True)

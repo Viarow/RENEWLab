@@ -3,22 +3,27 @@ import matplotlib
 import matplotlib.pyplot as plt
 from plot_lib import scatter_ser_snr
 
-suffix = ['65_65', '63_60', '60_57', '57_54', '54_51']
+suffix = ['65_65', '63_60', '60_57', '57_54', '54_51', '51_48']
 snr_dir = './results/LOS_64x2_16QAM/zf/'
 ser_zf_dir = './results/LOS_64x2_16QAM/zf/'
 # ser_langevine_dir = './results/LOS_64x2_16QAM/langevine'
-useful_frames = range(500, 600)
+# useful_frames = range(500, 600)
 save_dir = './results/LOS_64x2_16QAM/'
+num_users = 2
 
-snr_list = []
-for sf in suffix:
-    snr_list.append(np.load(snr_dir + 'TxGains_' + sf + '_snr.npy'))
-snr_array = np.concatenate(snr_list)
+snr_list = np.zeros((len(suffix), ))
+ser_zf_list = np.zeros((len(suffix), num_users))
+for i, sf in enumerate(suffix):
+    raw_snr = np.load(snr_dir + 'TxGains_' + sf + '_snr.npy')
+    num_frames = raw_snr.shape[0]
+    useful_frames = []
+    for j in range(num_frames):
+        if raw_snr[j] > 0:
+            useful_frames.append(j)
+    snr_list[i] = np.mean(raw_snr[useful_frames])
 
-ser_zf_list = []
-for sf in suffix:
-    data = np.load(snr_dir + 'TxGains_' + sf + '_evm_ser.npy')
-    ser_zf_list.append(data[2])
-ser_zf_array = np.concatenate(ser_zf_list)
+    raw_ser = np.load(snr_dir + 'TxGains_' + sf + '_evm_ser.npy')[2]
+    ser_zf_array = np.mean(raw_ser[useful_frames], axis=0)
+    ser_zf_list[i] = ser_zf_array
 
-scatter_ser_snr(ser_zf_array, snr_array, save_dir)
+scatter_ser_snr(ser_zf_list, snr_list, save_dir)

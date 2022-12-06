@@ -1058,6 +1058,10 @@ class hdf5_lib:
             ul_syms_f = np.fft.fft(ul_syms, fft_size, 3)
 
         SNR = np.zeros((n_frames, ))
+        print("num of zero subcarriers", end=' ')
+        print(len(zero_sc_ind))
+        print("num of non-zero subcarriers", end=' ')
+        print(len(nonzero_sc_ind))
         for i in range(n_frames):
             null_sc = ul_syms_f[i, :, :, zero_sc_ind]
             avg_noise_power = np.mean(np.sum(np.sum(np.square(np.abs(null_sc)), axis=1), axis=0))

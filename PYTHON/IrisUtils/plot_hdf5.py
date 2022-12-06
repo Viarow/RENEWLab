@@ -342,7 +342,7 @@ def verify_hdf5(hdf5, frame_i=100, cell_i=0, ofdm_sym_i=0, ant_i =0,
                 #snr, seq_found = hdf5_lib.measure_snr(pilot_samples, noise_samples, peak_map, pilot_type, ofdm_pilot, ofdm_len, z_padding)
             else:
                 noise_f = None
-            prefix = "./results/LOS_64x2_16QAM/zf/TxGains_65_65_"
+            prefix = "./results/LOS_64x2_16QAM/zf/TxGains_42_39"
             tx_data = hdf5_lib.load_tx_data(metadata, hdf5.dirpath)
             snr, equalized_symbols, demod_symbols, tx_symbols, slot_evm, slot_evm_snr, slot_ser = hdf5_lib.demodulate(ul_samps[:, ul_slot_i, :, :], userCSI, tx_data[:, :, ul_slot_i, :, :], metadata, ue_frame_offset, offset, ul_slot_i, noise_f, demod, fft_shifted_dataset)
             save_results(slot_evm, slot_evm_snr, slot_ser, path=prefix+"evm_ser.npy")
