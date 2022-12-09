@@ -4,7 +4,7 @@ import torch.nn as nn
 import pickle
 import os
 import math
-from gurobipy import *
+# from gurobipy import *
 from multiprocessing.dummy import Pool as ThreadPool 
 
 import yaml
