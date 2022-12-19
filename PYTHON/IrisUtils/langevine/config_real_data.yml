@@ -29,5 +29,5 @@ sigma_0 : 1
 sigma_L : 0.001 #1e-4
 n_sample_init : 100
 
-n_traj : 2
+n_traj : 5
 step_size : 0.000001 #1e-10

@@ -1010,6 +1010,78 @@ class hdf5_lib:
                     cl_ch_num, symbol_per_slot, fft_size)), (0, 2, 1, 3, 4))
             cl = cl + cl_ch_num
         return txdata
+    
+    @staticmethod
+    def compute_SNR(ul_samps, csi, txdata, metadata, ue_frame_offset, offset, ul_slot_i, noise_samps_f=None, method='zf', fft_shifted_dataset = True):
+        if method.lower() == 'mmse' and noise_samps_f is None:
+            print("%s requires noise samples"%(method))
+            return None
+        if 'SYMBOL_LEN' in metadata: # to support older datasets
+            samps_per_slot = int(metadata['SYMBOL_LEN'])
+        elif 'SLOT_SAMP_LEN' in metadata:
+            samps_per_slot = int(metadata['SLOT_SAMP_LEN'])
+        prefix_len = int(metadata['PREFIX_LEN'])
+        postfix_len = int(metadata['POSTFIX_LEN'])
+        z_padding = prefix_len + postfix_len
+        fft_size = int(metadata['FFT_SIZE'])
+        cp = int(metadata['CP_LEN'])
+        ofdm_len = fft_size + cp
+        symbol_per_slot = (samps_per_slot - z_padding) // ofdm_len
+        if 'UL_SYMS' in metadata:
+            ul_slot_num = int(metadata['UL_SYMS'])
+        elif 'UL_SLOTS' in metadata:
+            ul_slot_num = int(metadata['UL_SLOTS'])
+        data_sc_ind = np.array(metadata['OFDM_DATA_SC'])
+        pilot_sc_ind = np.array(metadata['OFDM_PILOT_SC'])
+        pilot_sc_val = np.array(metadata['OFDM_PILOT_SC_VALS'])
+        zero_sc_ind = np.setdiff1d(range(fft_size), data_sc_ind)
+        zero_sc_ind = np.setdiff1d(zero_sc_ind, pilot_sc_ind)
+        nonzero_sc_ind = np.setdiff1d(range(fft_size), zero_sc_ind)
+        modulation = metadata['CL_MODULATION'].astype(str)
+        ofdm_obj = ofdmTxRx()
+        data_sc_len = len(data_sc_ind)
+
+
+        # UL Samps: #Frames, #Uplink SLOTS, #Antennas, #Samples
+        n_frames = ul_samps.shape[0]
+        n_ants = ul_samps.shape[1]
+        n_users = csi.shape[1]
+        ul_syms = np.empty((n_frames, n_ants,
+                       symbol_per_slot, fft_size), dtype='complex64')
+
+        # UL Syms: #Frames, #Antennas, #OFDM Symbols, #Samples
+        for i in range(symbol_per_slot):
+            ul_syms[:, :, i, :] = ul_samps[:, :, offset + cp + i*ofdm_len:offset+(i+1)*ofdm_len]
+        if fft_shifted_dataset:
+            ul_syms_f = np.fft.fftshift(np.fft.fft(ul_syms, fft_size, 3), 3)
+        else:
+            ul_syms_f = np.fft.fft(ul_syms, fft_size, 3)
+
+        SNR = np.zeros((n_frames, ))
+        for i in range(n_frames):
+            null_sc = ul_syms_f[i, :, :, zero_sc_ind]
+            sum_noise = 0
+            for j in range(len(zero_sc_ind)):
+                sum_noise += np.sum(np.square(np.abs(null_sc[j, :, :])))
+            avg_noise_power = sum_noise / len(zero_sc_ind)
+            #avg_noise_power = np.mean(np.sum(np.sum(np.square(np.abs(null_sc)), axis=1), axis=0))
+           
+            sample_sc = ul_syms_f[i, :, :, nonzero_sc_ind]
+            sum_signal = 0
+            for j in range(len(nonzero_sc_ind)):
+                sum_signal += np.sum(np.square(np.abs(sample_sc[j, :, :])))
+            #signal_power = np.sum(np.square(np.abs(sample_sc)))
+            signal_power = sum_signal
+            ratio = (signal_power - avg_noise_power * len(nonzero_sc_ind)) / (avg_noise_power * len(nonzero_sc_ind))
+            if ratio < 1:
+                SNR[i] = -1
+            else:
+                SNR[i] = 10 * np.log10(ratio)
+            #SNR[i] = 10 * np.log10((signal_power - avg_noise_power * len(nonzero_sc_ind)) / (avg_noise_power * len(nonzero_sc_ind)))
+        print("SNR:", end=" ")
+        print(SNR)
+
+        return SNR
 
     @staticmethod
     def demodulate(ul_samps, csi, txdata, metadata, ue_frame_offset, offset, ul_slot_i, noise_samps_f=None, method='zf', fft_shifted_dataset = True):
@@ -1057,19 +1129,25 @@ class hdf5_lib:
         else:
             ul_syms_f = np.fft.fft(ul_syms, fft_size, 3)
 
-        SNR = np.zeros((n_frames, ))
-        print("num of zero subcarriers", end=' ')
-        print(len(zero_sc_ind))
-        print("num of non-zero subcarriers", end=' ')
-        print(len(nonzero_sc_ind))
-        for i in range(n_frames):
-            null_sc = ul_syms_f[i, :, :, zero_sc_ind]
-            avg_noise_power = np.mean(np.sum(np.sum(np.square(np.abs(null_sc)), axis=1), axis=0))
-            sample_sc = ul_syms_f[i, :, :, nonzero_sc_ind]
-            signal_power = np.sum(np.square(np.abs(sample_sc)))
-            SNR[i] = (signal_power - avg_noise_power * len(nonzero_sc_ind)) / (avg_noise_power * len(nonzero_sc_ind))
-        print("SNR:", end=" ")
-        print(SNR)
+        # SNR = np.zeros((n_frames, ))
+        # for i in range(n_frames):
+        #     null_sc = ul_syms_f[i, :, :, zero_sc_ind]
+        #     sum_noise = 0
+        #     for j in range(len(zero_sc_ind)):
+        #         sum_noise += np.sum(np.square(np.abs(null_sc[j, :, :])))
+        #     avg_noise_power = sum_noise / len(zero_sc_ind)
+        #     #avg_noise_power = np.mean(np.sum(np.sum(np.square(np.abs(null_sc)), axis=1), axis=0))
+           
+        #     sample_sc = ul_syms_f[i, :, :, nonzero_sc_ind]
+        #     sum_signal = 0
+        #     for j in range(len(nonzero_sc_ind)):
+        #         sum_signal += np.sum(np.square(np.abs(sample_sc[j, :, :])))
+        #     #signal_power = np.sum(np.square(np.abs(sample_sc)))
+        #     signal_power = sum_signal
+        #     SNR[i] = 10 * np.log10((signal_power - avg_noise_power * len(nonzero_sc_ind)) / (avg_noise_power * len(nonzero_sc_ind)))
+        #     # SNR[i] = (avg_signal_power - avg_noise_power) / avg_noise_power
+        # print("SNR:", end=" ")
+        # print(SNR)
 
         ul_equal_syms = np.zeros((n_frames, n_users, symbol_per_slot * data_sc_len), dtype='complex64')
 
@@ -1323,5 +1401,5 @@ class hdf5_lib:
             slot_evm_snr = 10 * np.log10(1 / slot_evm)
 
 
-        return SNR, ul_equal_syms, ul_demod_syms, tx_data_syms, slot_evm, slot_evm_snr, slot_ser
+        return ul_equal_syms, ul_demod_syms, tx_data_syms, slot_evm, slot_evm_snr, slot_ser
 

@@ -227,21 +227,22 @@ def scatter_ser_snr(slot_ser, snr, fig_dir=None):
         # fig2.savefig(fig_dir+'/ser_snr_max.png', dpi=200)
 
 
-def plot_ser_evm(slot_evm_snr, slot_ser, method, fig_dir=None):
-    n_users = slot_ser.shape[1]
+def plot_ser_evm(slot_ser, snr, colors, markers, labels, title, save_path=None):
+    n_curves = slot_ser.shape[1]
+    n_frames = snr.shape[0]
     fig1, ax1 = plt.subplots()
-    ax1.set_title('SER vs EVM-SNR')
-    ax1.set_xlabel('EVM-SNR(dB)')
+    ax1.set_title(title)
+    ax1.set_xlabel('SNR(dB)')
     ax1.set_ylabel('Symbol Error Rate')
-    for k in range(0, n_users):
-        ax1.scatter(slot_evm_snr[:, k], slot_ser[:, k], label='User %d'%(k))
+    for k in range(n_curves):
+        ax1.plot(snr, slot_ser[:, k], color=colors[k], marker=markers[k], markersize=7, label=labels[k])
     ax1.set_yscale('log')
-    ax1.set_ylim([1e-3, 0.1])
-    ax1.legend(loc='upper right', frameon=True)
-
+    #ax1.set_ylim([1e-4, 1])
+    ax1.legend(loc='lower left', frameon=True)
+    plt.grid(which="both", axis='both')
     plt.tight_layout()
-    if fig_dir:
-        fig1.savefig(fig_dir + '/ser_evm_snr_' + method + '.png', dpi=200)
+    if save_path:
+        fig1.savefig(save_path, dpi=200)
 
 
 def save_results(slot_evm, slot_evm_snr, slot_ser, path):
