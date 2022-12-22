@@ -3,12 +3,12 @@ import matplotlib
 import matplotlib.pyplot as plt
 from plot_lib import scatter_ser_snr, plot_ser_evm
 
-suffix = ['65_65', '63_60', '60_57', '57_54', '54_51', '51_48']
-snr_dir = './results/LOS_64x2_16QAM/zf/'
-ser_zf_dir = './results/LOS_64x2_16QAM/zf/'
-ser_lang_dir = './results/LOS_64x2_16QAM/langevine_traj2/'
+suffix = ['65_65', '63_60', '60_57', '57_54', '54_51']
+snr_dir = './results/LOS_64x2_64QAM/zf/'
+ser_zf_dir = './results/LOS_64x2_64QAM/zf/'
+ser_lang_dir = './results/LOS_64x2_64QAM/langevine/'
 # useful_frames = range(500, 600)
-save_dir = './results/LOS_64x2_16QAM/'
+save_dir = './results/LOS_64x2_64QAM/'
 num_users = 2
 
 snr_list = np.zeros((len(suffix), ))
@@ -34,6 +34,6 @@ colors = ['tab:blue', 'tab:blue', 'tab:red', 'tab:red']
 markers = ['o', 'v', 'o', 'v']
 labels = ['zf user0', 'zf user1', 'lang user0', 'lang user1']
 
-save_path = save_dir+'/ser_snr_traj2.png'
-title = 'SER vs SNR, langevine 2 trajectories'
+save_path = save_dir+'/ser_snr_traj5.png'
+title = 'SER vs SNR, langevine 5 trajectories'
 plot_ser_evm(ser_list, snr_list, colors, markers, labels, title, save_path)

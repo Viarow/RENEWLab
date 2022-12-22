@@ -6,7 +6,7 @@ NT: 2
 NR : 64
 
 #Modulation order
-mod_n : 16
+mod_n : 64
 mod_n2 : 16
 
 #SNR
