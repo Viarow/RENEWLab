@@ -330,7 +330,7 @@ def verify_hdf5(hdf5, frame_i=100, cell_i=0, ofdm_sym_i=0, ant_i =0,
         user_amps = np.mean(np.abs(ul_samps[:, :, ant_i, :]), axis=2)
         plot_iq_samps(ul_samps, user_amps, n_frm_st, ref_frame, [ul_slot_i], [ant_i], data_str="Uplink Data")
 
-        avail_method = ['zf', 'mmse', 'conj', 'ml', 'zf-sic', 'langevine']
+        avail_method = ['zf', 'mmse', 'conj', 'ml', 'zf-sic', 'langevine', 'remimo']
         #if demod=='zf' or demod=='conj' or demod=='mmse' or demod=='ml':
         if demod in avail_method:
             if noise_avail:
@@ -342,10 +342,11 @@ def verify_hdf5(hdf5, frame_i=100, cell_i=0, ofdm_sym_i=0, ant_i =0,
                 #snr, seq_found = hdf5_lib.measure_snr(pilot_samples, noise_samples, peak_map, pilot_type, ofdm_pilot, ofdm_len, z_padding)
             else:
                 noise_f = None
-            prefix = "./results/LOS_64x2_64QAM/langevine/TxGains_54_51_"
+            prefix = "./results/LOS_64x2_16QAM/remimo/TxGains_65_65_"
             tx_data = hdf5_lib.load_tx_data(metadata, hdf5.dirpath)
             # snr = hdf5_lib.compute_SNR(ul_samps[:, ul_slot_i, :, :], userCSI, tx_data[:, :, ul_slot_i, :, :], metadata, ue_frame_offset, offset, ul_slot_i, noise_f, demod, fft_shifted_dataset)
             # np.save(prefix+"snr.npy", snr)
+            # hdf5.get_remimo_data(ul_samps[:, ul_slot_i, :, :], userCSI, tx_data[:, :, ul_slot_i, :, :], metadata, ue_frame_offset, offset, ul_slot_i, noise_f, fft_shifted_dataset)
             equalized_symbols, demod_symbols, tx_symbols, slot_evm, slot_evm_snr, slot_ser = hdf5_lib.demodulate(ul_samps[:, ul_slot_i, :, :], userCSI, tx_data[:, :, ul_slot_i, :, :], metadata, ue_frame_offset, offset, ul_slot_i, noise_f, demod, fft_shifted_dataset)
             save_results(slot_evm, slot_evm_snr, slot_ser, path=prefix+"evm_ser.npy")
             

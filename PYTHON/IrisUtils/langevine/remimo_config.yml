@@ -1,0 +1,32 @@
+#########################################################
+###  Parameters of the MIMO system and RE-MIMO Model  ###
+#########################################################
+
+NR: 64
+NT: 2
+
+mod_n : 16
+mod_n2 : 16
+d_transmitter_encoding : 64
+d_model : 512
+n_head : 8
+nhid : 2048
+nlayers : 16
+dropout : 0.0
+
+num_epochs : 10
+train_batch_size : 200
+test_batch_size : 200
+learning_rate : 0.001 #1e-4
+
+SNR_db_min: 0.0
+SNR_db_max: 1.0
+SNR_db_max_two_mod : 30.0
+
+corr_flag : True
+batch_corr : True
+rho_low : 0.55
+rho_high : 0.75
+
+data_path : '/home/jialinglyu/remimo_data/LOS_64x2_16QAM/TxGains_65_65_data.pth'
+model_path : '/home/jialinglyu/remimo_data/LOS_64x2_16QAM/TxGains_65_65_checkpoint.pth'

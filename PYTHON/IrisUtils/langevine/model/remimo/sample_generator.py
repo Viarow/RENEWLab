@@ -3,7 +3,7 @@ import numpy as np
 from scipy.stats import ortho_group as og
 import scipy.linalg as LA
 # from matrix_models import *
-from utils_remimo import *
+from langevine.model.remimo.utils_remimo import *
 
 def adjust_var(data, NR):
     factor = 1.0/np.sqrt(2.0*NR*data.var())

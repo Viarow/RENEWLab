@@ -4,9 +4,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from TransformerEncoder import TransformerEncoder
-from TransformerEncoderLayer import TransformerEncoderLayer
-from TransformerDecoderLayer import TransformerDecoderLayer
+from langevine.model.remimo.TransformerEncoder import TransformerEncoder
+from langevine.model.remimo.TransformerEncoderLayer import TransformerEncoderLayer
+from langevine.model.remimo.TransformerDecoderLayer import TransformerDecoderLayer
 
 def frobenius_norm(matrix, matrix_transpose=None):
     if (not matrix_transpose):

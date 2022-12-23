@@ -45,6 +45,9 @@ from langevine.utils.util import *
 from langevine.runners.runner_langevin_real_data import *
 from langevine.runners.runner_classic_methods_real_data import *
 from langevine.model.ML import *
+from langevine.model.remimo.sample_generator import sample_generator
+from langevine.model.remimo.iterative_classifier import iterative_classifier
+from langevine.model.remimo.utils_remimo import *
 from multiprocessing.dummy import Pool as ThreadPool 
 
 
@@ -1362,6 +1365,115 @@ class hdf5_lib:
                     slot_ser[new_i, j] = (ul_demod_syms.shape[2] - len(list(res))) / ul_demod_syms.shape[2]
             slot_evm_snr = 10 * np.log10(1 / slot_evm)
 
+        elif method == 'remimo':
+            dirPath = os.getcwd()
+            with open(dirPath + '/langevine/remimo_config.yml', 'r') as f:
+                aux = yaml.load(f,  Loader=yaml.FullLoader)
+            config = dict2namespace(aux)  
+            SEED = 123
+            torch.manual_seed(SEED)
+            useGPU = True
+            if useGPU and torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                device = 'cuda:0'
+            else:
+                device = 'cpu'
+
+            # transmitted symbols
+            frame_start = 0 if txdata.shape[0] == 1 else min_ue_offset
+            frame_end = frame_start + useful_frame_num
+            
+            # uncompensated channel matrices, shape (n_frames, users, antennas, data_sc_len)
+            csi_f = np.zeros((n_frames, n_users, n_ants, fft_size), dtype='complex64')
+            csi_f[:, :, :, nonzero_sc_ind] = csi
+
+            # noise_sigma
+            noise_sigma = np.zeros((n_frames, ))
+            for i in range(n_frames):
+                null_sc = ul_syms_f[i, :, :, zero_sc_ind]
+                sum_noise = 0
+                for j in range(len(zero_sc_ind)):
+                    sum_noise += np.sum(np.square(np.abs(null_sc[j, :, :])))
+                avg_noise_power = sum_noise / len(zero_sc_ind)
+                noise_sigma[i] = avg_noise_power / (config.NR * symbol_per_slot)
+            noise_sigma = torch.from_numpy(noise_sigma).to(device=device).float()
+
+            # container
+            ul_equal_syms = np.zeros((useful_frame_num, n_users, symbol_per_slot, data_sc_len)) + 1j * np.zeros((useful_frame_num, n_users, symbol_per_slot, data_sc_len))
+            ul_demod_syms = np.zeros((useful_frame_num, n_users, symbol_per_slot, data_sc_len), dtype=int)
+
+            # load model
+            gen = sample_generator(config.train_batch_size, config.mod_n, config.NR)
+            model = iterative_classifier(config.d_model, config.n_head, config.nhid, config.nlayers, config.mod_n, config.NR, config.d_transmitter_encoding, gen.real_QAM_const, gen.imag_QAM_const, gen.constellation, device, config.dropout)
+            model = model.to(device=device)
+            checkpoint = torch.load(config.model_path)
+            model.load_state_dict(checkpoint['model_state_dict'])
+            print("Loaded model from " + config.model_path)
+
+            # main loop
+            for subcarrierIndex in range(data_sc_len):
+                for ofdmSymb in range(symbol_per_slot):
+
+                    #\\\ Load data
+                    subcarrier = data_sc_ind[subcarrierIndex]
+                    batch_size, H_MMSE, H_comp, HPilotri, yPilotri, xri, xPilotri, pilotValue, pilotIndex, sigma, yri = processData(ofdmSymb, subcarrier, frame_start, frame_end,  pilot_sc_ind, pilot_sc_val, csi_f, ul_syms_f, tx_symbols, config)
+
+                    #\\\ Create generator and indices of the true symbols
+                    generator = sample_generator(batch_size, config.mod_n, config.NR)
+                    idx_real = generator.demodulate(xri)
+                    j_indices = generator.joint_indices(idx_real)
+
+                    #\\\ Phase correction
+                    samplesP = torch.zeros((batch_size, config.NT * 2, 4))
+                    index = 0
+                    #\\\ Pilot evaluation
+                    for pilotInd in range(len(pilotIndex)):
+                        serLangevin, serSDR, samplesP[:,:,index] = runClassicDetectors(config, generator, batch_size, device, H = HPilotri[:,:,:,index], y = yPilotri[index,:,:], noise_sigma = sigma, j_indices = j_indices)
+                        index =  index + 1
+                    
+                    samplesP_complexMMSE = samplesP[:, 0:config.NT, :].cpu().detach().numpy() + 1j * samplesP[:, config.NT:, :].cpu().detach().numpy()
+                    phase_corr = samplesP_complexMMSE * np.conj(pilotValue)
+                    phase_err = np.angle(np.mean(phase_corr, 2))
+                    phase_comp = np.exp(-1j*phase_err)
+
+                    #\\\ Multiply the channel by the phase correction before running the detection
+                    H = H_comp  * phase_comp[:,None,]
+                    H = torch.tensor(H)
+                    Hr = torch.real(H)
+                    Hi = torch.imag(H)
+                    h1 = torch.cat((Hr, 1. * Hi), dim=2)
+                    h2 = torch.cat((-1. * Hi, Hr), dim=2)
+                    H = torch.cat((h1, h2), dim=1)
+
+                    H = H.to(device=device).float()
+                    y = yri.to(device=device).float()
+                    j_indices = j_indices.to(device=device)
+
+                    for bidx in range(n_frames//config.test_batch_size):
+                        input_range = range(bidx*config.test_batch_size, (bidx+1)*config.test_batch_size)
+                        out = model.forward(H[input_range], y[input_range], noise_sigma[input_range])
+                        pred_indices = out[-1].permute(1,2,0).argmax(dim=1)
+                        del out
+                        accuracy = (pred_indices == j_indices[input_range]).sum().to(dtype=torch.float32)
+                        print(accuracy/j_indices.numel())
+                        ul_demod_syms[input_range, :, ofdmSymb, subcarrierIndex] = pred_indices.cpu().numpy()
+
+            ul_equal_syms = generator.constellation[ul_demod_syms]
+            ul_equal_syms = np.reshape(ul_equal_syms, (ul_equal_syms.shape[0], ul_equal_syms.shape[1], symbol_per_slot * data_sc_len))
+            ul_demod_syms = np.reshape(ul_demod_syms, (ul_demod_syms.shape[0], ul_demod_syms.shape[1], symbol_per_slot * data_sc_len))
+
+            for j in range(n_users):
+                frame_start = 0 if txdata.shape[0] == 1 else min_ue_offset
+                frame_end = frame_start + useful_frame_num
+                slot_evm[:, j] = np.linalg.norm(ul_equal_syms[frame_start:frame_end, j, :] - tx_data_syms[:useful_frame_num, j, :], 2, axis=1) / ul_equal_syms.shape[2]
+                for i in range(frame_start, frame_end):
+                    new_i = i - frame_start
+                    ul_tx_syms = ofdm_obj.demodulation(tx_data_syms[new_i, j, :], M)
+                    res = [k for k, l in zip(list(ul_demod_syms[i, j, :]), list(ul_tx_syms)) if k == l]
+                    slot_ser[new_i, j] = (ul_demod_syms.shape[2] - len(list(res))) / ul_demod_syms.shape[2]
+            slot_evm_snr = 10 * np.log10(1 / slot_evm)
+        
+
         else:
             
             # UL Syms: #Frames, #OFDM Symbols, #Antennas, #Samples
@@ -1403,3 +1515,163 @@ class hdf5_lib:
 
         return ul_equal_syms, ul_demod_syms, tx_data_syms, slot_evm, slot_evm_snr, slot_ser
 
+    
+    @staticmethod
+    def get_remimo_data(ul_samps, csi, txdata, metadata, ue_frame_offset, offset, ul_slot_i, noise_samps_f=None, fft_shifted_dataset = True):
+        method = 'remimo'
+        if method.lower() == 'mmse' and noise_samps_f is None:
+            print("%s requires noise samples"%(method))
+            return None
+        if 'SYMBOL_LEN' in metadata: # to support older datasets
+            samps_per_slot = int(metadata['SYMBOL_LEN'])
+        elif 'SLOT_SAMP_LEN' in metadata:
+            samps_per_slot = int(metadata['SLOT_SAMP_LEN'])
+        prefix_len = int(metadata['PREFIX_LEN'])
+        postfix_len = int(metadata['POSTFIX_LEN'])
+        z_padding = prefix_len + postfix_len
+        fft_size = int(metadata['FFT_SIZE'])
+        cp = int(metadata['CP_LEN'])
+        ofdm_len = fft_size + cp
+        symbol_per_slot = (samps_per_slot - z_padding) // ofdm_len
+        if 'UL_SYMS' in metadata:
+            ul_slot_num = int(metadata['UL_SYMS'])
+        elif 'UL_SLOTS' in metadata:
+            ul_slot_num = int(metadata['UL_SLOTS'])
+        data_sc_ind = np.array(metadata['OFDM_DATA_SC'])
+        pilot_sc_ind = np.array(metadata['OFDM_PILOT_SC'])
+        pilot_sc_val = np.array(metadata['OFDM_PILOT_SC_VALS'])
+        zero_sc_ind = np.setdiff1d(range(fft_size), data_sc_ind)
+        zero_sc_ind = np.setdiff1d(zero_sc_ind, pilot_sc_ind)
+        nonzero_sc_ind = np.setdiff1d(range(fft_size), zero_sc_ind)
+        modulation = metadata['CL_MODULATION'].astype(str)
+        ofdm_obj = ofdmTxRx()
+        data_sc_len = len(data_sc_ind)
+
+
+        # UL Samps: #Frames, #Uplink SLOTS, #Antennas, #Samples
+        n_frames = ul_samps.shape[0]
+        n_ants = ul_samps.shape[1]
+        n_users = csi.shape[1]
+        ul_syms = np.empty((n_frames, n_ants,
+                       symbol_per_slot, fft_size), dtype='complex64')
+
+        # UL Syms: #Frames, #Antennas, #OFDM Symbols, #Samples
+        for i in range(symbol_per_slot):
+            ul_syms[:, :, i, :] = ul_samps[:, :, offset + cp + i*ofdm_len:offset+(i+1)*ofdm_len]
+        if fft_shifted_dataset:
+            ul_syms_f = np.fft.fftshift(np.fft.fft(ul_syms, fft_size, 3), 3)
+        else:
+            ul_syms_f = np.fft.fft(ul_syms, fft_size, 3)
+
+        ul_equal_syms = np.zeros((n_frames, n_users, symbol_per_slot * data_sc_len), dtype='complex64')
+
+        # process tx data
+        rep = n_frames // txdata.shape[0]
+        tx_symbols = np.tile(txdata, (rep, 1, 1, 1))
+        frac_fr = n_frames % txdata.shape[0]
+        #tx_symbols = np.tile(txdata[:1], (n_frames, 1, 1, 1))
+        #frac_fr = 0
+        if frac_fr > 0:
+            frac = txdata[:frac_fr, :, :, :]
+            tx_symbols = frac if rep == 0 else np.concatenate((tx_symbols, frac), axis=0)
+        tx_data_syms = np.reshape(tx_symbols[:, :, :, data_sc_ind], (tx_symbols.shape[0], n_users, symbol_per_slot * data_sc_len))
+        useful_frame_num = tx_data_syms.shape[0]
+        if txdata.shape[0] > 1:
+            useful_frame_num = useful_frame_num - max(ue_frame_offset)
+        min_ue_offset = min(ue_frame_offset)
+        slot_evm = np.zeros((useful_frame_num, n_users))
+        slot_evm_snr = np.zeros((useful_frame_num, n_users))
+        slot_ser = np.zeros((useful_frame_num, n_users))
+
+        M = 2
+        if modulation == 'QPSK':
+            M = 4
+        elif modulation == '16QAM':
+            M = 16
+        elif modulation == '64QAM':
+            M = 64
+
+        dirPath = os.getcwd()
+        with open(dirPath + '/langevine/remimo_config.yml', 'r') as f:
+            aux = yaml.load(f, Loader=yaml.FullLoader)
+        config = dict2namespace(aux)
+        SEED = 123
+        torch.manual_seed(SEED)
+        useGPU = False
+        device = 'cpu'
+
+        # transmitted symbols
+        frame_start = 0 if txdata.shape[0] == 1 else min_ue_offset
+        frame_end = frame_start + useful_frame_num
+            
+        # uncompensated channel matrices, shape (n_frames, users, antennas, data_sc_len)
+        csi_f = np.zeros((n_frames, n_users, n_ants, fft_size), dtype='complex64')
+        csi_f[:, :, :, nonzero_sc_ind] = csi
+
+        # container
+        ul_equal_syms = np.zeros((useful_frame_num, n_users, symbol_per_slot, data_sc_len)) + 1j * np.zeros((useful_frame_num, n_users, symbol_per_slot, data_sc_len))
+
+        # dict to save
+        num_batches = int(data_sc_len * symbol_per_slot * n_frames / config.train_batch_size)
+        data_dict = {
+            'H': torch.empty((num_batches, config.train_batch_size, 2*config.NR, 2*config.NT), dtype=torch.float32),
+            'y': torch.empty((num_batches, config.train_batch_size, 2*config.NR), dtype=torch.float32),
+            'j_indices': torch.empty((num_batches, config.train_batch_size, config.NT), dtype=torch.int64),
+            'noise_sigma': torch.empty((num_batches, config.train_batch_size), dtype=torch.float32)
+        }
+
+        noise_sigma = np.zeros((n_frames, ))
+        for i in range(n_frames):
+            null_sc = ul_syms_f[i, :, :, zero_sc_ind]
+            sum_noise = 0
+            for j in range(len(zero_sc_ind)):
+                sum_noise += np.sum(np.square(np.abs(null_sc[j, :, :])))
+            avg_noise_power = sum_noise / len(zero_sc_ind)
+            noise_sigma[i] = avg_noise_power / (config.NR * symbol_per_slot)
+        
+        counter = 0
+        for subcarrierIndex in range(data_sc_len):
+            for ofdmSymb in range(symbol_per_slot):
+
+                print("Subcarrier: {:d}, OFDM Symbol: {:d}".format(subcarrierIndex, ofdmSymb))
+                #\\\ Load data
+                subcarrier = data_sc_ind[subcarrierIndex]
+                batch_size, H_MMSE, H_comp, HPilotri, yPilotri, xri, xPilotri, pilotValue, pilotIndex, sigma, yri = processData(ofdmSymb, subcarrier, frame_start, frame_end,  pilot_sc_ind, pilot_sc_val, csi_f, ul_syms_f, tx_symbols, config)
+
+                #\\\ Create generator and indices of the true symbols
+                generator = sample_generator(batch_size, config.mod_n, config.NR)
+                idx_real = generator.demodulate(xri)
+                j_indices = generator.joint_indices(idx_real)
+
+                #\\\ Phase correction
+                samplesP = torch.zeros((batch_size, config.NT * 2, 4))
+                index = 0
+                #\\\ Pilot evaluation
+                for pilotInd in range(len(pilotIndex)):
+                    serLangevin, serSDR, samplesP[:,:,index] = runClassicDetectors(config, generator, batch_size, device, H = HPilotri[:,:,:,index], y = yPilotri[index,:,:], noise_sigma = sigma, j_indices = j_indices)
+                    index =  index + 1
+
+                samplesP_complexMMSE = samplesP[:, 0:config.NT, :].cpu().detach().numpy() + 1j * samplesP[:, config.NT:, :].cpu().detach().numpy()
+                phase_corr = samplesP_complexMMSE * np.conj(pilotValue)
+                phase_err = np.angle(np.mean(phase_corr, 2))
+                phase_comp = np.exp(-1j*phase_err)
+
+                #\\\ Multiply the channel by the phase correction before running the detection
+                H = H_comp  * phase_comp[:,None,]
+                H = torch.tensor(H)
+                Hr = torch.real(H)
+                Hi = torch.imag(H)
+                h1 = torch.cat((Hr, 1. * Hi), dim=2)
+                h2 = torch.cat((-1. * Hi, Hr), dim=2)
+                H = torch.cat((h1, h2), dim=1)
+
+                #\\\ store the data
+                update_range = range(counter, counter + n_frames//config.train_batch_size)
+                data_dict['H'][update_range] = H.view(-1, config.train_batch_size, 2*config.NR, 2*config.NT).float()
+                data_dict['y'][update_range] = yri.view(-1, config.train_batch_size, 2*config.NR).float()
+                data_dict['j_indices'][update_range] = j_indices.view(-1, config.train_batch_size, config.NT)
+                data_dict['noise_sigma'][update_range] = torch.from_numpy(noise_sigma).view(-1, config.train_batch_size).float()
+                counter += n_frames//config.train_batch_size
+
+        torch.save(data_dict, config.data_path)
+        print('H, y, j_indices, noise_sigma saved.')

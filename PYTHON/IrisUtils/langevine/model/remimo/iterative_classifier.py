@@ -3,8 +3,8 @@ import numpy as np
 import torch.nn as nn
 import math
 
-from EncoderDecoderBlock import EncoderDecoderBlock
-from NumTransmitterEncoding import NumTransmitterEncoding
+from langevine.model.remimo.EncoderDecoderBlock import EncoderDecoderBlock
+from langevine.model.remimo.NumTransmitterEncoding import NumTransmitterEncoding
 
 class iterative_classifier(nn.Module):
 

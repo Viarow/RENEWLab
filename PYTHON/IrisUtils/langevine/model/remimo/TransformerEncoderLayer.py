@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import pickle
 from torch.nn.modules.normalization import LayerNorm
-from MultiheadAttention import MultiheadAttention
+from langevine.model.remimo.MultiheadAttention import MultiheadAttention
 
 attn_weight_filename = './validtn_results/attn_weights/'
 attn_weight_format = '_attn_weight.pickle'
